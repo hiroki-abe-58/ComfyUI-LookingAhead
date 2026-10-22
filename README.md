@@ -8,7 +8,12 @@ the video in 3-latent-frame chunks with a KV cache, exactly like the official in
 
 [日本語の説明はこちら](README.ja.md)
 
-<!-- DEMO -->
+![Four 5-second clips made with this node](docs/images/demo_grid.gif)
+
+These four clips are each the first try at seed 42, at the default settings (768×432, 16 fps, 50 steps). They are shown as
+they came out, scaled down. The windmill turns and the train crosses the bridge. The dog runs along the beach, but loses the toy
+in its mouth. The kite is a miss: it falls out of the frame instead of climbing. The start images were made for this demo with
+MOSS-Image (Apache-2.0); prompts and details are in [docs/images](docs/images/README.md).
 
 ## What is checked
 

@@ -74,7 +74,15 @@ Other checks in the same queue:
 | Looking Ahead Unload | frees the model; system commit 43.6 GiB afterwards, against 55.8 GiB during the run before it |
 | three example scenes (sailboat, cat, pendulum) | coherent videos; the pendulum swings smoothly from left, through the bottom, to the right |
 
-## 5. Performance (RTX 5090, Windows 11, SDPA)
+## 5. Clean install
+
+The setup was a fresh clone of ComfyUI v0.42.1 and a new virtual environment (PyTorch 2.10.0+cu128 and ComfyUI's
+requirements, nothing else), with the pack cloned from GitHub into `custom_nodes`. `tools/download_model.py` found the
+checkpoint already in place and accepted its SHA-256. Queued unchanged, `workflows/api/looking_ahead_image_to_video_api.json`
+produced the same decoded frames, bit for bit, as the development setup on ComfyUI master. The start image was the kite demo
+image.
+
+## 6. Performance (RTX 5090, Windows 11, SDPA)
 
 | | 5 s (80 frames, 768×432) | 10 s (160 frames) |
 | --- | --- | --- |

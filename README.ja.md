@@ -7,7 +7,11 @@ Future Chunk Prediction（FCP）の自己回帰動画モデルです。このパ
 
 [English README](README.md)
 
-<!-- DEMO -->
+![このノードで作った 5 秒のクリップ 4 本](docs/images/demo_grid.gif)
+
+4 本とも、既定の設定（768×432、16 fps、50 ステップ）で seed 42 の 1 回目の出力を、縮小しただけでそのまま並べています。風車は回り、列車は橋を渡ります。
+犬は浜辺を走りますが、くわえていたおもちゃが消えます。凧は失敗例で、上昇せずにフレームの外へ落ちていきます。開始画像はこのデモのために MOSS-Image（Apache-2.0）で
+生成しました。プロンプトと詳細は [docs/images](docs/images/README.md) にあります。
 
 ## 確認したこと
 
