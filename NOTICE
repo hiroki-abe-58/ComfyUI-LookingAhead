@@ -1,0 +1,19 @@
+Looking Ahead for ComfyUI (ComfyUI-LookingAhead)
+Copyright 2026 hiroki-abe-58
+
+Unofficial integration; not affiliated with Tencent, Nanjing University, Zhejiang University or Alibaba.
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+This repository contains no model weights. It includes, in looking_ahead_comfy/vendor/, code from:
+
+- Looking Ahead (https://github.com/TencentARC/Looking-Ahead), Copyright (C) 2026 Tencent. Apache License 2.0
+  (vendor/LICENSE.Looking-Ahead.txt). Its NOTICE is reproduced in vendor/NOTICE.Looking-Ahead.txt. The files that came from
+  Looking Ahead are listed, with every change, in vendor/UPSTREAM.md; each starts with a line naming its source.
+- Wan2.1 / Wan2.2 (https://github.com/Wan-Video/Wan2.2), Copyright 2024-2025 The Alibaba Wan Team Authors. Apache License 2.0
+  (vendor/LICENSE.Wan2.2.txt): the Wan modules retained by Looking Ahead, and five primitives taken directly from Wan2.2
+  (vendor/wan22/modules/model.py, see vendor/UPSTREAM.md).
+- The flow UniPC scheduler adapted by Wan from diffusers (https://github.com/huggingface/diffusers), Apache License 2.0.
+
+The model weights are downloaded separately by the user and keep their own terms: the Looking Ahead checkpoints
+(https://huggingface.co/TencentARC/Looking-Ahead, Apache License 2.0, with its NOTICE), the Wan 2.1 VAE and the umT5-XXL text
+encoder (Wan2.1, Apache License 2.0; ComfyUI repackaged files from https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged).

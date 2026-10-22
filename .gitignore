@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+refs/
+# never commit model files, outputs or local logs
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.ckpt
+*.gguf
+*.latent
+output/
+outputs/
+logs/
+*.log

@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# CPU only. No model weights are downloaded: the model tests use a tiny random-initialized backbone, compared with the official
+# pipeline built around the same weights.
+env:
+  COMFYUI_REF: v0.42.1
+  COMFYUI_COMMIT: 63be2f9b82ad0dac88a7ceaa28a9cf3154125a18
+  UPSTREAM_COMMIT: 210794c758f386d3a1eaf3673b51b7cdd8374dfc
+  WAN22_COMMIT: 1ea34ff48f87168174e12956e200b1d908b1c5ff
+  WAN22_MODEL_SHA256: 8b39115298ca7322806c19b3165b3f435a94fe4a58f0624aec24f8e7f4997432
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ComfyUI-LookingAhead
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reference sources (pinned)
+        run: |
+          # byte-exact references on every runner (Windows runners default to core.autocrlf=true)
+          git -c core.autocrlf=false clone --quiet --depth 1 --branch $env:COMFYUI_REF https://github.com/Comfy-Org/ComfyUI.git refs/ComfyUI
+          if ((git -C refs/ComfyUI rev-parse HEAD) -ne $env:COMFYUI_COMMIT) { throw "ComfyUI commit mismatch" }
+          git -c core.autocrlf=false clone --quiet --filter=blob:none https://github.com/TencentARC/Looking-Ahead.git refs/Looking-Ahead
+          git -C refs/Looking-Ahead -c core.autocrlf=false checkout --quiet $env:UPSTREAM_COMMIT
+          Invoke-WebRequest -UseBasicParsing -OutFile refs/wan22_model.py "https://raw.githubusercontent.com/Wan-Video/Wan2.2/$($env:WAN22_COMMIT)/wan/modules/model.py"
+          if ((Get-FileHash refs/wan22_model.py -Algorithm SHA256).Hash.ToLower() -ne $env:WAN22_MODEL_SHA256) { throw "Wan2.2 model.py hash mismatch" }
+
+      - name: Install (CPU)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          # ComfyUI for the node tests; the official pipeline's own imports for the bit-exact comparison (versions from its uv.lock)
+          pip install -r refs/ComfyUI/requirements.txt diffusers==0.40.0 transformers==5.18.0 ftfy regex einops omegaconf matplotlib accelerate pytest ruff
+          pip list
+
+      - name: Lint
+        run: ruff check --no-cache ComfyUI-LookingAhead
+
+      - name: No absolute local paths in the repository
+        run: |
+          $files = git -C ComfyUI-LookingAhead ls-files | Where-Object { $_ -notmatch '\.(png|jpg|mp4|gif|webp)$' } | ForEach-Object { Join-Path ComfyUI-LookingAhead $_ }
+          $hits = $files | Select-String -Pattern '[A-Za-z]:\\{1,2}[A-Za-z0-9_.-]+\\|/home/[a-z]+/|/Users/[A-Za-z]+/'
+          if ($hits) { $hits | ForEach-Object { "$($_.Path):$($_.LineNumber)" }; throw "absolute local path found" }
+
+      - name: Tests (references required, nothing may be skipped)
+        env:
+          LOOKING_AHEAD_COMFYUI_DIR: ${{ github.workspace }}/refs/ComfyUI
+          LOOKING_AHEAD_UPSTREAM_DIR: ${{ github.workspace }}/refs/Looking-Ahead
+          LOOKING_AHEAD_WAN22_MODEL: ${{ github.workspace }}/refs/wan22_model.py
+          LOOKING_AHEAD_REQUIRE_REFERENCES: "1"
+        run: |
+          Set-Location ComfyUI-LookingAhead
+          python -m pytest tests -q -rs -p no:cacheprovider -W ignore::DeprecationWarning -W ignore::FutureWarning

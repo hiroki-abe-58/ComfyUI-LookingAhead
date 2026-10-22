@@ -1,0 +1,26 @@
+[project]
+name = "looking-ahead"
+description = "Looking Ahead (TencentARC, Future Chunk Prediction) 1.3B text-and-image-to-video for ComfyUI: the official autoregressive KV-cache sampler, verified bit-exact against the official pipeline, with ComfyUI's own umT5 text encoder and Wan 2.1 VAE. Unofficial."
+version = "0.1.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/hiroki-abe-58/ComfyUI-LookingAhead"
+
+[tool.comfy]
+PublisherId = "hiroki-abe-58"
+DisplayName = "Looking Ahead for ComfyUI"
+Icon = ""
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+extend-exclude = ["looking_ahead_comfy/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
