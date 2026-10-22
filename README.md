@@ -26,8 +26,9 @@ MOSS-Image (Apache-2.0); prompts and details are in [docs/images](docs/images/RE
 - **Text encoder.** ComfyUI's umT5-XXL (Wan) gives the same token count as the official one. With the same weights it is closer
   to a float32 reference than the official bfloat16 path: 0.17 % against 2.1 %. The common fp8 file is 6–9 % from it.
 - **End to end.** A real ComfyUI queue reproduces the official video, with the same scene, composition and motion. Frame PSNR is
-  28.7 dB with the official text-encoder weights and 28.0 dB with the fp8 file. The difference is the autoregressive sampler
-  amplifying small input changes: the 0.4 % first-frame difference alone moves the output by as much.
+  28.7 dB with the official text-encoder weights and 28.0 dB with the fp8 file. The difference comes from the autoregressive
+  sampler amplifying small input changes: the 0.4 % first-frame difference alone moves the output latents by 3.5 %, close to
+  the 4.1 % of the whole run.
 - **Robustness.** The same workflow queued twice gives bit-identical output. Interrupting stops sampling within a step, and the
   next prompt runs normally.
 
@@ -61,7 +62,8 @@ git clone https://github.com/hiroki-abe-58/ComfyUI-LookingAhead
 | `umt5_xxl_fp8_e4m3fn_scaled.safetensors` (or `umt5_xxl_fp16`) | `models/text_encoders/` | 6.7 GB | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/tree/main/split_files/text_encoders) |
 | `wan_2.1_vae.safetensors` | `models/vae/` | 0.25 GB | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/tree/main/split_files/vae) |
 
-Keep the checkpoint in its `fcp_wan21_t2v_1.3b` folder. The TF baseline (`tf_wan21_t2v_1.3b/model_ema.pt`) works the same way.
+Keep the checkpoint in its `fcp_wan21_t2v_1.3b` folder. The teacher-forcing baseline (`tf_wan21_t2v_1.3b/model_ema.pt`,
+5.7 GB, `--tf` in the script) loads and runs the same way (tested); use it to compare FCP against plain teacher forcing.
 Do not download the whole Looking-Ahead repository: it also holds the 5B checkpoints (about 50 GB), which this pack does not
 support yet.
 

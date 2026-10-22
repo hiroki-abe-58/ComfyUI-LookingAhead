@@ -23,7 +23,8 @@ Future Chunk Prediction（FCP）の自己回帰動画モデルです。このパ
 - **テキストエンコーダ**：ComfyUI の umT5-XXL（Wan）は公式とトークン数が一致します。同じ重みで比べると、float32 基準との差は公式の bfloat16 経路
   （2.1 %）より小さい 0.17 % です。よく使われる fp8 ファイルでは 6〜9 % です。
 - **エンドツーエンド**：ComfyUI の実キューで、公式と同じ場面・構図・動きの動画を再現しました。フレーム PSNR は、公式のテキストエンコーダの重みで 28.7 dB、
-  fp8 ファイルで 28.0 dB です。差の原因は、自己回帰サンプラーが入力の小さな差を増幅することです。先頭フレームの 0.4 % の差だけでも、出力は同じくらい変わります。
+  fp8 ファイルで 28.0 dB です。差の原因は、自己回帰サンプラーが入力の小さな差を増幅することです。先頭フレームの 0.4 % の差だけでも出力潜在は 3.5 % 変わり、
+  全体を ComfyUI で処理したときの 4.1 % に近い値になります。
 - **安定性**：同じワークフローを 2 回実行するとビット単位で同じ出力になります。中断すると 1 ステップ以内に止まり、次のプロンプトは通常どおり実行されます。
 
 詳細と数値は [docs/VERIFICATION.md](docs/VERIFICATION.md) にあります。
@@ -55,7 +56,8 @@ git clone https://github.com/hiroki-abe-58/ComfyUI-LookingAhead
 | `umt5_xxl_fp8_e4m3fn_scaled.safetensors`（または `umt5_xxl_fp16`） | `models/text_encoders/` | 6.7 GB | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/tree/main/split_files/text_encoders) |
 | `wan_2.1_vae.safetensors` | `models/vae/` | 0.25 GB | [Comfy-Org/Wan_2.1_ComfyUI_repackaged](https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/tree/main/split_files/vae) |
 
-チェックポイントは `fcp_wan21_t2v_1.3b` フォルダごと置いてください。TF ベースライン（`tf_wan21_t2v_1.3b/model_ema.pt`）も同じように使えます。
+チェックポイントは `fcp_wan21_t2v_1.3b` フォルダごと置いてください。teacher forcing のベースライン（`tf_wan21_t2v_1.3b/model_ema.pt`、5.7 GB、
+スクリプトでは `--tf`）も同じように読み込んで動かせます（動作確認済み）。FCP と通常の teacher forcing を比べるときに使ってください。
 Looking-Ahead リポジトリ全体はダウンロードしないでください。このパックがまだ対応していない 5B のチェックポイント（約 50 GB）も含まれています。
 
 これらのファイルだけを固定リビジョンで取得し、SHA-256 を確認するスクリプトもあります（ComfyUI の Python で実行してください）。

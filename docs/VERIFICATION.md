@@ -82,6 +82,10 @@ checkpoint already in place and accepted its SHA-256. Queued unchanged, `workflo
 produced the same decoded frames, bit for bit, as the development setup on ComfyUI master. The start image was the kite demo
 image. The sailboat case with the fp8 text encoder also gave identical latents in both setups.
 
+`tools/download_model.py --tf` downloaded the teacher-forcing baseline (`tf_wan21_t2v_1.3b/model_ema.pt`) and checked its
+SHA-256. In the same clean install it loaded and generated the sailboat example: 80 frames, 209.8 s of sampling, 13.44 GiB peak.
+Being a different model, its video differs from FCP's (23.9 dB).
+
 ## 6. Performance (RTX 5090, Windows 11, SDPA)
 
 | | 5 s (80 frames, 768×432) | 10 s (160 frames) |
