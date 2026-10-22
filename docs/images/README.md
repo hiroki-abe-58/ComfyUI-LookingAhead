@@ -26,3 +26,15 @@ they are scaled to 320×180 and every third frame is kept (8 fps). `demo_grid_5b
 | top right | The train moves right across the bridge and the locomotive leaves the frame; the smoke merges into the clouds. |
 | bottom left | The dog runs to the right along the water. As with 1.3B, the toy in its mouth disappears. |
 | bottom right | The kite stays in the air, dipping and swinging while its tail flutters; its shape bends from frame to frame. |
+
+`demo_continuation.gif`: video continuation of the 5B train clip above (`demo_grid_5b.gif`, top right) with the shipped
+workflows, unchanged: `workflows/api/looking_ahead_5b_video_continuation_api.json` (left) and
+`looking_ahead_video_continuation_api.json` (1.3B, right). Settings: seed 42, 10 s in total, automatic context, prompt "The
+steam locomotive keeps moving to the right across the stone bridge, pulling its green passenger cars, while white smoke drifts
+back over the train. The camera stays still." Each is the first and only try.
+- **Context.** 5B used the last 4.5 s of the clip as context (109 frames at 24 fps) and generated 5.5 s. 1.3B used its last 4.6 s
+  (73 frames at 16 fps) and generated 5.4 s.
+- **GIF.** It starts at 3.5 s, 320×180 per side, 8 fps. The label on each side says whether the frame is input (the decoded
+  context) or generated.
+- **What happens.** Both keep the train moving right across the bridge after the input ends. With 5B, the later cars pick up
+  red details. With 1.3B, the cars blur and turn brown in the last second.

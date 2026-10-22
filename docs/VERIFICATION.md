@@ -5,7 +5,7 @@ Reference: the official inference (`inference.py`) of TencentARC/Looking-Ahead a
 (`fcp_wan21_t2v_1.3b/model_ema.pt`, Hub revision 91b4b2e8, SHA-256 415946da…). The settings are the README example: sailboat
 image, its prompt, 5 s, seed 42, 50 steps, CFG 3.0, shift 5.0, 768×432.
 
-Sections 1–6 are about this 1.3B model. Section 7 covers the 5B model the same way.
+Sections 1–6 are about this 1.3B model. Section 7 covers the 5B model the same way, and section 8 the video continuation of both.
 
 On Windows, the official code needs the changes in [TencentARC/Looking-Ahead#2](https://github.com/TencentARC/Looking-Ahead/pull/2)
 to run; it otherwise stops at `import fcntl`. The reference runs used that branch with PyTorch SDPA. Where FlashAttention 4
@@ -172,3 +172,53 @@ So the queue computes exactly what the sampler computes from ComfyUI's encoded i
 The model is 9.3 GiB in bfloat16. The KV cache holds 31 latent frames for both prompts, 12.3 GiB at 1024×576. Loading
 memory-maps the 34 GB float32 checkpoint and keeps a bfloat16 copy of the backbone, which is why the commit charge peaks while
 loading. During sampling it was about 60 GiB.
+
+## 8. Video continuation (TV2V)
+
+Reference: the official inference with `--video_path` (automatic context), on `milk_pouring.mp4` of the Looking-Ahead
+repository (25 frames, 24 fps, 1024×576) and its prompt, 5 s, seed 42.
+- **1.3B:** the context is 13 frames at 16 fps (K = 4), followed by 67 generated frames.
+- **5B:** the context is 25 frames at 24 fps (K = 7), followed by 95 generated frames; the decode was again done in a separate process.
+- **Code:** TencentARC/Looking-Ahead#2 for Windows, and for 5B also #3. Without #3, the official 5B context repeats 6 of its 25 frames, as the README explains.
+
+| check | result |
+| --- | --- |
+| sampler fed the official run's inputs (context latents, embeddings, noise) | **bit-identical**: 1.3B 22 latent frames, 5B 31; sampling 193 s and 202 s |
+| CPU comparison with the official pipeline (`tests/test_runtime.py`) | bit-identical with a 4-latent context (Wan 2.1) and a 7-latent context with a rolling cache (Wan 2.2) |
+| context length and frame choice against `src/utils/video_prefix.py` and `SingleVideoDataset` | the same K and context length in 6440 combinations of model, output length, available frames and requested K. The same source frames as torchcodec's `get_frames_played_at` in every case checked (both example videos, 16 and 24 fps, automatic and fixed K), with #3's time expression |
+| context encoded by ComfyUI (`LoadVideo` decode → frame choice → crop → ComfyUI VAE) | 5.7 % (1.3B) and 12.3 % (5B) relative L2 from the official context latents |
+
+Almost all of that context difference comes from decoding. ComfyUI decodes video to float RGB, while torchcodec (and PyAV's
+8-bit RGB) convert to 8-bit RGB. Both use the same BT.601 matrix but interpolate chroma differently: on the example the frames
+differ by 0.75 levels on average and up to 33 near colour edges. Fed the official decoder's frames instead, the same ComfyUI
+path is 0.42 % (1.3B) and 0.71 % (5B) from the official context, the same as for a start image. The node keeps ComfyUI's
+decode, so that it works with ComfyUI's own video loading, trimming and cropping.
+
+End to end, through the real queue:
+
+| model, text encoder | output latents vs official | decoded video vs official (PSNR mean / min) |
+| --- | --- | --- |
+| 1.3B, official weights (bf16) | 12.1 % | 36.5 / 27.9 dB |
+| 1.3B, fp8 | 10.3 % | 36.5 / 27.0 dB |
+| 5B, official weights (bf16) | 20.5 % | 33.0 / 26.2 dB |
+| 5B, fp8 | 20.6 % | 33.1 / 26.4 dB |
+
+The milk pours and fills the glass the same way, with the same splashes. The context anchors the motion: with 5B, the
+start-image mode differed by 57 % (section 7). With the official noise fixed, one input at a time:
+
+| input from ComfyUI, the rest official | 1.3B | 5B |
+| --- | --- | --- |
+| context latents only | 13.5 % | 20.5 % |
+| text embeddings only (bf16; this prompt is 186 tokens, 6.6 % from the official embeddings) | 11.2 % | 13.9 % |
+| both | 12.1 %, **bit-identical to the real queue** | 20.5 %, **bit-identical to the real queue** |
+
+Other checks in the same queue:
+
+| check | result |
+| --- | --- |
+| `context_latents` = 3 | stops: "context_latents must be 1 + 3*M (4, 7, 10, ...)" |
+| `context_latents` = 4 (from the start of the video) | source frames 0, 1, 3, 4, … 18 (every 1/16 s), 80 output frames |
+| `include_context` off | the 67 new frames only; the latents are the same as with the context |
+| Image to Video after the shared-code change | latents bit-identical to before for 1.3B (0.1.1) and 5B (0.2.0) |
+| speed | 1.3B: 193 s of sampling for 18 generated latent frames, 13.44 GiB peak; 5B: 203 s for 24, 22.94 GiB |
+| clean install (section 5's fresh ComfyUI v0.42.1, this version from GitHub) | `workflows/api/looking_ahead_5b_video_continuation_api.json` queued unchanged, with the 5B train demo clip as input: the same 240 decoded frames, bit for bit, as the development setup on ComfyUI master |
