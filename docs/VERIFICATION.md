@@ -221,3 +221,4 @@ Other checks in the same queue:
 | `include_context` off | the 67 new frames only; the latents are the same as with the context |
 | Image to Video after the shared-code change | latents bit-identical to before for 1.3B (0.1.1) and 5B (0.2.0) |
 | speed | 1.3B: 193 s of sampling for 18 generated latent frames, 13.44 GiB peak; 5B: 203 s for 24, 22.94 GiB |
+| clean install (section 5's fresh ComfyUI v0.42.1, this version from GitHub) | `workflows/api/looking_ahead_5b_video_continuation_api.json` queued unchanged, with the 5B train demo clip as input: the same 240 decoded frames, bit for bit, as the development setup on ComfyUI master |
