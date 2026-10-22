@@ -6,9 +6,8 @@ Reference: the official inference (`inference.py`) of TencentARC/Looking-Ahead a
 image, its prompt, 5 s, seed 42, 50 steps, CFG 3.0, shift 5.0, 768×432.
 
 On Windows, the official code needs the changes in [TencentARC/Looking-Ahead#2](https://github.com/TencentARC/Looking-Ahead/pull/2)
-to run; it otherwise stops at `import fcntl`. The reference runs used that branch with PyTorch SDPA. With FlashAttention 4
-made importable for a test, the branch gives the same frames as unmodified upstream (bit-identical), and FA4 against SDPA is
-33.5 dB PSNR.
+to run; it otherwise stops at `import fcntl`. The reference runs used that branch with PyTorch SDPA. Where FlashAttention 4
+imports, as on Linux, the branch takes the same code path as upstream.
 
 ## 1. Sampler: bit-identical
 
@@ -48,4 +47,42 @@ closer one to float32. The official run's own embeddings are what the bit-identi
 These runs used `LoadImage`, `CLIPLoader`, `CLIPTextEncode` ×2, `VAELoader`, the pack's loader and sampler, `SaveVideo` and
 `SaveLatent`. The comparison is against the official SDPA run.
 
-<!-- E2E -->
+| text encoder file | output latents vs official (relative L2) | decoded video vs official (PSNR, mean / min) |
+| --- | --- | --- |
+| official weights renamed to ComfyUI keys (bf16) | 4.1 % | 28.7 / 27.4 dB |
+| `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | 6.8 % | 28.0 / 26.2 dB |
+
+The videos show the same scene, composition and motion as the official one (the boat drifts the same way across the lake).
+The remaining difference is the sampler's sensitivity, not a mismatch. With the official noise fixed, changing one input at a
+time gives:
+
+| input from ComfyUI, the rest official | output latents vs official |
+| --- | --- |
+| first-frame latent only (0.38 % different) | 3.5 % |
+| text embeddings only (bf16, official weights) | 4.1 % |
+| both (the real queue) | 4.1 % |
+
+A small change in any input grows to about 3.5–4 % over 21 latent frames × 50 steps of autoregressive sampling.
+
+Other checks in the same queue:
+
+| check | result |
+| --- | --- |
+| the same workflow queued twice | bit-identical latents |
+| `/interrupt` during sampling | stopped within a step (26 s after queueing); the next prompt ran normally |
+| 10 s output | 160 frames; 515 s of sampling; peak allocated 13.6 GiB |
+| Looking Ahead Unload | frees the model; system commit 43.6 GiB afterwards, against 55.8 GiB during the run before it |
+| three example scenes (sailboat, cat, pendulum) | coherent videos; the pendulum swings smoothly from left, through the bottom, to the right |
+
+## 5. Performance (RTX 5090, Windows 11, SDPA)
+
+| | 5 s (80 frames, 768×432) | 10 s (160 frames) |
+| --- | --- | --- |
+| sampling | 209–211 s | 515 s |
+| whole queue, warm text encoder and VAE | 215–219 s | 523 s |
+| peak allocated (torch) | 13.44 GiB | 13.61 GiB |
+| peak Windows commit (whole system) | 55–60 GiB | 56 GiB |
+
+The KV cache holds 22 latent frames for the positive and negative prompts: about 10.5 GiB at 768×432 in bfloat16. This is
+most of the GPU memory. Each 3-latent-frame chunk is slower than the last while the cache fills: 16 s for the first and 43 s
+for the seventh, in the official SDPA run. Past 5 s the cache rolls, and the chunk time stops growing.

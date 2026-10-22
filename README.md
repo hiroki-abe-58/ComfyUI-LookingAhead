@@ -20,8 +20,11 @@ the video in 3-latent-frame chunks with a KV cache, exactly like the official in
   ComfyUI's Wan 2.1 VAE encodes it to within 0.4 % (relative L2) of the official encoder.
 - **Text encoder.** ComfyUI's umT5-XXL (Wan) gives the same token count as the official one. With the same weights it is closer
   to a float32 reference than the official bfloat16 path: 0.17 % against 2.1 %. The common fp8 file is 6–9 % from it.
-- **End to end.** A real ComfyUI queue with the fp16-equivalent text encoder reproduces the official video. The motion and
-  composition match; frame PSNR against the official video is 28.7 dB mean.
+- **End to end.** A real ComfyUI queue reproduces the official video, with the same scene, composition and motion. Frame PSNR is
+  28.7 dB with the official text-encoder weights and 28.0 dB with the fp8 file. The difference is the autoregressive sampler
+  amplifying small input changes: the 0.4 % first-frame difference alone moves the output by as much.
+- **Robustness.** The same workflow queued twice gives bit-identical output. Interrupting stops sampling within a step, and the
+  next prompt runs normally.
 
 Details and numbers: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
@@ -75,7 +78,20 @@ The negative prompt in the workflow is the official default. The defaults are th
   as the official code does. Upstream does not guarantee quality beyond 5 s.
 - **Size.** Other sizes run, but the model was trained at 768×432.
 
-<!-- PERF -->
+## Speed and memory
+
+RTX 5090, Windows 11, PyTorch 2.10 SDPA, 768×432:
+
+| length | frames | sampling | peak VRAM (allocated) |
+| --- | --- | --- | --- |
+| 5 s | 80 | 210 s | 13.4 GiB |
+| 10 s | 160 | 515 s | 13.6 GiB |
+
+Most of the VRAM is the KV cache (22 latent frames for the positive and negative prompts, about 10.5 GiB). PyTorch reserved
+up to 15.8 GiB, so a 24 GB GPU is comfortable and 16 GB is borderline. The node frees other models from VRAM before it samples,
+and moves its own model back to RAM afterwards unless `keep_model_loaded` is on. In system RAM the model takes about 2.8 GB
+(bfloat16; the 8 GB checkpoint is memory-mapped while loading). During a run, Windows commit on this machine went from about
+30 GB idle to 55–60 GB, with ComfyUI holding the text encoder and VAE as well.
 
 ## Limits
 

@@ -1,0 +1,102 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "looking_ahead_start.png"
+    },
+    "_meta": {
+      "title": "Start image"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "The red kite rises and dips in the strong wind while its long yellow ribbon tail flutters and curls behind it. The person holding the string takes a small step back. White clouds drift slowly across the blue sky. The camera stays still.",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Prompt (what happens)"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Negative prompt (official default)"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "LookingAheadModelLoader",
+    "inputs": {
+      "checkpoint": "fcp_wan21_t2v_1.3b/model_ema.pt"
+    }
+  },
+  "7": {
+    "class_type": "LookingAheadImageToVideo",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "start_image": [
+        "1",
+        0
+      ],
+      "seconds": 5,
+      "seed": 42,
+      "steps": 50,
+      "cfg": 3.0,
+      "shift": 5.0,
+      "width": 768,
+      "height": 432,
+      "keep_model_loaded": false
+    }
+  },
+  "8": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "7",
+        0
+      ],
+      "filename_prefix": "video/LookingAhead",
+      "format": "auto",
+      "codec": "auto"
+    }
+  }
+}
