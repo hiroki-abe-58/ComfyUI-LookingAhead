@@ -19,15 +19,16 @@ def is_flash_attn_4_available():
 
 
 def register_to_config(init):
-    """Like diffusers' decorator: store the constructor arguments (defaults included) in `self.config`."""
-    signature = inspect.signature(init)
+    """Like diffusers' decorator: store the constructor arguments (defaults included) in `self.config`.
+
+    The decorated constructors take only named parameters (no *args or **kwargs)."""
+    params = list(inspect.signature(init).parameters.values())[1:]  # without self
 
     @functools.wraps(init)
     def wrapper(self, *args, **kwargs):
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        values = dict(bound.arguments)
-        values.pop("self")
+        values = {p.name: p.default for p in params if p.default is not inspect.Parameter.empty}
+        values.update(zip((p.name for p in params), args))
+        values.update(kwargs)
         object.__setattr__(self, "config", types.SimpleNamespace(**values))
         init(self, *args, **kwargs)
 

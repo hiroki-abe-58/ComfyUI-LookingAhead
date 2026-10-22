@@ -1,4 +1,4 @@
-"""ComfyUI nodes for Looking Ahead (in-process; no subprocess, nothing downloaded at run time)."""
+"""ComfyUI nodes for Looking Ahead. Everything runs inside the ComfyUI process; nothing is downloaded at run time."""
 
 from __future__ import annotations
 

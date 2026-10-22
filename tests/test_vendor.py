@@ -30,6 +30,34 @@ def test_vendored_code_has_no_environment_process_or_file_access():
         assert not hits, (path.name, hits)
 
 
+def test_shipped_modules_avoid_what_the_registry_scan_flags():
+    # The Comfy Registry scan flagged `signature.bind(...)` in compat.py as a network operation (0.1.0); keep the shipped
+    # modules free of that and of process, environment and network access. tools/download_model.py is a user-run
+    # download script and is not imported by the nodes.
+    package = ROOT / "looking_ahead_comfy"
+    pattern = re.compile(r"\.bind\(|\bsocket\b|urllib|requests|subprocess|os\.environ|getenv|(?<![.\w])eval\(|(?<![.\w])exec\(|pickle")
+    for path in [*package.rglob("*.py"), ROOT / "__init__.py"]:
+        hits = [line for line in path.read_text(encoding="utf-8").splitlines() if pattern.search(line)]
+        assert not hits, (path.name, hits)
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "torch.load(" in line:
+                assert "weights_only=True" in line, (path.name, line)
+
+
+def test_register_to_config_records_constructor_arguments():
+    from looking_ahead_comfy.vendor.compat import register_to_config
+
+    class Thing:
+        @register_to_config
+        def __init__(self, a, b=2, c=None):
+            self.sum = a + b
+
+    t = Thing(1, c="x")
+    assert vars(t.config) == {"a": 1, "b": 2, "c": "x"} and t.sum == 3
+    assert vars(Thing(5, 6).config) == {"a": 5, "b": 6, "c": None}
+    assert vars(Thing(a=1, b=3).config) == {"a": 1, "b": 3, "c": None}
+
+
 def test_regenerated_from_pinned_sources(upstream_dir, wan22_model):
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / "vendor_patch.py"), str(upstream_dir), str(wan22_model), "--check"],
                             capture_output=True, text=True)
