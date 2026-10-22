@@ -14,7 +14,7 @@ from . import paths, runtime
 LookingAheadModel = io.Custom("LOOKING_AHEAD_MODEL")
 log = logging.getLogger("LookingAhead")
 
-# One checkpoint stays in RAM (bf16, about 2.8 GB); loading another replaces it.
+# One checkpoint stays in RAM (bf16: about 2.8 GB for 1.3B, 10 GB for 5B); loading another replaces it.
 _resident = {}
 
 
@@ -85,9 +85,9 @@ class LookingAheadModelLoader(io.ComfyNode):
             node_id="LookingAheadModelLoader",
             display_name="Looking Ahead Model Loader",
             category="loaders/looking-ahead",
-            description=("Loads a Looking Ahead 1.3B checkpoint (TencentARC/Looking-Ahead, fcp_wan21_t2v_1.3b or tf_wan21_t2v_1.3b "
-                         "model_ema.pt) from models/looking_ahead as bfloat16. Training-only branches are dropped. One model "
-                         "stays in RAM; loading another frees it."),
+            description=("Loads a Looking Ahead checkpoint (TencentARC/Looking-Ahead model_ema.pt: fcp_ or tf_wan21_t2v_1.3b, "
+                         "or fcp_ or tf_wan22_ti2v_5b) from models/looking_ahead as bfloat16. The model size is read from "
+                         "the weights. Training-only branches are dropped. One model stays in RAM; loading another frees it."),
             inputs=[io.Combo.Input("checkpoint", options=paths.checkpoints(),
                                    tooltip="model_ema.pt in models/looking_ahead, e.g. fcp_wan21_t2v_1.3b/model_ema.pt")],
             outputs=[LookingAheadModel.Output(display_name="model")],
@@ -109,26 +109,32 @@ class LookingAheadImageToVideo(io.ComfyNode):
             node_id="LookingAheadImageToVideo",
             display_name="Looking Ahead Image to Video",
             category="video/looking-ahead",
-            description=("Text-and-image-to-video with Looking Ahead 1.3B: the start image is resized to cover the frame and "
+            description=("Text-and-image-to-video with Looking Ahead: the start image is resized to cover the frame and "
                          "center-cropped like the official inference, then the video is generated autoregressively in "
-                         "3-latent-frame chunks (KV cache, 16 fps). The released models were trained on 5-second clips."),
+                         "3-latent-frame chunks (KV cache; 16 fps for 1.3B, 24 fps for 5B). The released models were "
+                         "trained on 5-second clips."),
             inputs=[
                 LookingAheadModel.Input("model"),
                 io.Conditioning.Input("positive", tooltip="CLIPTextEncode with a umT5-XXL (Wan) text encoder"),
                 io.Conditioning.Input("negative", tooltip="The official default negative prompt is in the example workflow"),
-                io.Vae.Input("vae", tooltip="The Wan 2.1 VAE (wan_2.1_vae.safetensors)"),
+                io.Vae.Input("vae", tooltip="The Wan 2.1 VAE (wan_2.1_vae.safetensors) for 1.3B, the Wan 2.2 VAE "
+                                            "(wan2.2_vae.safetensors) for 5B"),
                 io.Image.Input("start_image"),
                 io.Int.Input("seconds", default=5, min=1, max=30,
-                             tooltip="Output length including the start frame, at 16 fps. Longer than 5 s uses the rolling "
-                                     "KV cache with a 3-frame attention sink; quality beyond 5 s is not guaranteed upstream."),
+                             tooltip="Output length including the start frame (16 fps for 1.3B, 24 fps for 5B). Longer than "
+                                     "5 s uses the rolling KV cache with a 3-frame attention sink; quality beyond 5 s is not "
+                                     "guaranteed upstream."),
                 io.Int.Input("seed", default=42, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True),
                 io.Int.Input("steps", default=50, min=1, max=200, tooltip="Denoising steps per chunk (official: 50)"),
                 io.Float.Input("cfg", default=3.0, min=0.0, max=20.0, step=0.1, tooltip="Official: 3.0"),
                 io.Float.Input("shift", default=5.0, min=0.1, max=20.0, step=0.1, tooltip="Timestep shift (official: 5.0)"),
-                io.Int.Input("width", default=runtime.WIDTH, min=256, max=1280, step=16, tooltip="Trained at 768x432"),
-                io.Int.Input("height", default=runtime.HEIGHT, min=256, max=1280, step=16, tooltip="Trained at 768x432"),
+                io.Int.Input("width", default=runtime.WAN21.width, min=256, max=1280, step=16,
+                             tooltip="Trained at 768x432 (1.3B) and 1024x576 (5B). 5B needs a multiple of 32."),
+                io.Int.Input("height", default=runtime.WAN21.height, min=256, max=1280, step=16,
+                             tooltip="Trained at 768x432 (1.3B) and 1024x576 (5B). 5B needs a multiple of 32."),
                 io.Boolean.Input("keep_model_loaded", default=False,
-                                 tooltip="Keep the model on the GPU after sampling (faster reruns, about 2.8 GB of VRAM)"),
+                                 tooltip="Keep the model on the GPU after sampling (faster reruns; about 2.8 GB of VRAM for "
+                                         "1.3B, 10 GB for 5B)"),
             ],
             outputs=[io.Video.Output(display_name="video"), io.Image.Output(display_name="images"),
                      io.Latent.Output(display_name="latent"), io.String.Output(display_name="report")],
@@ -145,20 +151,27 @@ class LookingAheadImageToVideo(io.ComfyNode):
         import torch
 
         device = mm.get_torch_device()
-        pixel_frames, latent_frames = runtime.frame_counts(seconds=seconds)
+        net = _model(model)
+        family = net.family
+        multiple = 2 * family.vae_spatial_stride  # the VAE stride times the 2x2 patch
+        if width % multiple or height % multiple:
+            raise ValueError(f"{family.name}: width and height must be multiples of {multiple}, got {width}x{height} "
+                             f"(trained at {family.width}x{family.height})")
+        pixel_frames, latent_frames = runtime.frame_counts(seconds=seconds, family=family)
         pos = _embeddings(positive, "positive").to(device, torch.bfloat16)
         neg = _embeddings(negative, "negative").to(device, torch.bfloat16)
         image, geometry = _prepare_image(start_image, width, height)
-        fmt = comfy.latent_formats.Wan21()
+        fmt = comfy.latent_formats.Wan22() if family is runtime.WAN22 else comfy.latent_formats.Wan21()
         raw = vae.encode(image[:, :, :, :3])
-        if raw.ndim != 5 or raw.shape[1] != runtime.LATENT_CHANNELS:
-            raise ValueError(f"vae: expected the Wan 2.1 VAE (16-channel video latents), got latents {tuple(raw.shape)}")
+        if raw.ndim != 5 or raw.shape[1] != family.latent_channels:
+            want = "Wan 2.2 VAE (wan2.2_vae.safetensors)" if family is runtime.WAN22 else "Wan 2.1 VAE (wan_2.1_vae.safetensors)"
+            raise ValueError(f"vae: {family.name} needs the {want} with {family.latent_channels}-channel video latents, got "
+                             f"latents {tuple(raw.shape)}")
         initial = fmt.process_in(raw.float()).permute(0, 2, 1, 3, 4).to(device, torch.bfloat16)
         _, _, _, lat_h, lat_w = initial.shape
 
-        net = _model(model)
         param_bytes = sum(p.numel() * p.element_size() for p in net.parameters())
-        mm.free_memory(param_bytes + runtime.kv_cache_bytes(net, height, width) + 4 * 2**30, device)
+        mm.free_memory(param_bytes + runtime.kv_cache_bytes(net, lat_h, lat_w) + 4 * 2**30, device)
         net.to(device)
         bar = comfy.utils.ProgressBar((latent_frames - 1) // runtime.FRAMES_PER_BLOCK * steps)
 
@@ -169,7 +182,7 @@ class LookingAheadImageToVideo(io.ComfyNode):
         torch.cuda.reset_peak_memory_stats(device)
         start = time.perf_counter()
         try:
-            noise = runtime.initial_noise(seed, (1, latent_frames - 1, runtime.LATENT_CHANNELS, lat_h, lat_w), device)
+            noise = runtime.initial_noise(seed, (1, latent_frames - 1, family.latent_channels, lat_h, lat_w), device)
             latents = runtime.sample(net, pos, neg, initial, noise, steps=steps, cfg=cfg, shift=shift, callback=progress)
         finally:
             if not keep_model_loaded:
@@ -183,8 +196,8 @@ class LookingAheadImageToVideo(io.ComfyNode):
         if images.ndim == 5:
             images = images.reshape(-1, *images.shape[-3:])
         images = images[:pixel_frames]
-        video = InputImpl.VideoFromComponents(Types.VideoComponents(images=images, audio=None, frame_rate=Fraction(runtime.FPS)))
-        report = {"checkpoint": model.get("name"), "frames": int(images.shape[0]), "fps": runtime.FPS,
+        video = InputImpl.VideoFromComponents(Types.VideoComponents(images=images, audio=None, frame_rate=Fraction(family.fps)))
+        report = {"checkpoint": model.get("name"), "model": family.name, "frames": int(images.shape[0]), "fps": family.fps,
                   "latent_frames": latent_frames, "size": [width, height], "seed": seed, "steps": steps, "cfg": cfg,
                   "shift": shift, "sampling_seconds": round(sample_s, 1), "peak_allocated_gib": round(peak / 2**30, 2),
                   "start_image": geometry}

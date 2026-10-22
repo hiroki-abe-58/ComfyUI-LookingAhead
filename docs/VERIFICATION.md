@@ -5,6 +5,8 @@ Reference: the official inference (`inference.py`) of TencentARC/Looking-Ahead a
 (`fcp_wan21_t2v_1.3b/model_ema.pt`, Hub revision 91b4b2e8, SHA-256 415946da…). The settings are the README example: sailboat
 image, its prompt, 5 s, seed 42, 50 steps, CFG 3.0, shift 5.0, 768×432.
 
+Sections 1–6 are about this 1.3B model. Section 7 covers the 5B model the same way.
+
 On Windows, the official code needs the changes in [TencentARC/Looking-Ahead#2](https://github.com/TencentARC/Looking-Ahead/pull/2)
 to run; it otherwise stops at `import fcntl`. The reference runs used that branch with PyTorch SDPA. Where FlashAttention 4
 imports, as on Linux, the branch takes the same code path as upstream.
@@ -95,6 +97,78 @@ Being a different model, its video differs from FCP's (23.9 dB).
 | peak allocated (torch) | 13.44 GiB | 13.61 GiB |
 | peak Windows commit (whole system) | 55–60 GiB | 56 GiB |
 
-The KV cache holds 22 latent frames for the positive and negative prompts: about 10.5 GiB at 768×432 in bfloat16. This is
+The KV cache holds 22 latent frames for the positive and negative prompts: about 9.8 GiB at 768×432 in bfloat16. This is
 most of the GPU memory. Each 3-latent-frame chunk is slower than the last while the cache fills: 16 s for the first and 43 s
 for the seventh, in the official SDPA run. Past 5 s the cache rolls, and the chunk time stops growing.
+
+## 7. The 5B model (Wan 2.2 TI2V)
+
+Reference: the official inference with the FCP 5B EMA checkpoint (`fcp_wan22_ti2v_5b/model_ema.pt`, Hub revision 91b4b2e8,
+SHA-256 0c47d3fe…), on the paper-fan example image and prompt of the Looking-Ahead repository: 5 s (120 frames at 24 fps),
+1024×576, seed 42, 50 steps, CFG 3.0, shift 5.0. It ran on the TencentARC/Looking-Ahead#2 branch with SDPA, as in section 1.
+
+On this machine (RTX 5090 32 GB, 64 GB RAM), the official script's VAE decode did not fit right after sampling. The generator
+and both KV caches were still on the GPU, VRAM filled up, and the Windows commit charge passed 104 GiB, where I stopped the
+run. The reference run therefore stopped after sampling and saved its tensors. The official VAE wrapper then decoded the saved
+latents in a separate process, with the same call (`decode_to_pixel`, bfloat16) the pipeline makes: 121 frames, 11.1 s,
+8.2 GiB.
+
+| check | result |
+| --- | --- |
+| sampler fed the official run's inputs | **bit-identical** latents (31 latent frames, max abs difference 0); 231.7 s against the official 231 s; peak allocated 22.95 GiB against 24.29 GiB |
+| the node's noise for seed 42 | identical to the official noise |
+| start image resize and crop | the same geometry as the official report (1672×941 → 1024×577 → crop to 1024×576) |
+| ComfyUI `wan2.2_vae.safetensors` encode of the start frame | relative L2 0.82 %, max abs 0.030 |
+| ComfyUI VAE decode of the official latents | PSNR 60.3 dB mean (min 58.0), 121 frames |
+| text encoder against the official bfloat16 embeddings | official weights in ComfyUI: 3.3 % (prompt, 46 tokens) / 2.3 % (negative, 98 tokens); fp8 file: 7.9 % / 9.5 % |
+
+CI runs the CPU comparison of section 1 with a tiny Wan 2.2 TI2V shaped model as well (48-channel latents, rolling cache):
+bit-identical.
+
+### End to end
+
+The real ComfyUI queue used the shipped 5B graph, with the paper-fan image and prompt.
+
+| text encoder file | output latents vs official (relative L2) | decoded video vs official (PSNR mean / min) |
+| --- | --- | --- |
+| official weights renamed to ComfyUI keys (bf16) | 57.2 % | 25.2 / 12.9 dB |
+| `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | 59.7 % | 23.3 / 12.7 dB |
+
+This is much further from the official run than with 1.3B (4.1 %), so I checked where it comes from:
+
+- **Growth over time.** The difference grows steadily with time. It is 0.8 % on the start frame (the VAE encode). It stays under 5 % for the first second, reaches about 40 % at 2.5 s and about 90 % on the last latent frames.
+- **What the frames show.** For the first half the videos are nearly the same: the same hands open the same red fan the same way. In the second half both open the fan into a full semicircle, as the prompt asks, but the fan's size and the hands' positions differ.
+- **One input at a time.** With the official noise fixed (the node's noise for seed 42 is identical to it), changing one input at a time gives:
+
+| input from ComfyUI, the rest official | output latents vs official |
+| --- | --- |
+| first-frame latent only (0.82 % different) | 59.0 % |
+| text embeddings only (bf16, official weights) | 59.9 % |
+| both | 57.2 %, and **bit-identical to the real queue's latents** |
+
+So the queue computes exactly what the sampler computes from ComfyUI's encoded inputs. Each small input difference on its own grows to about 60 % over 30 latent frames × 50 steps. For 1.3B the same first-frame test gives 3.5 %. The 5B model's sampling is far more sensitive to its inputs: ComfyUI reproduces the scene and the action, but not the official frames.
+
+### Other checks in the 5B queue
+
+| check | result |
+| --- | --- |
+| the same 5B workflow in two separate ComfyUI processes | bit-identical latents (a repeat in the same process is served from ComfyUI's cache and proves nothing, so the second run was in a new process) |
+| `wan_2.1_vae.safetensors` with the 5B model | stops before sampling: "needs the Wan 2.2 VAE (wan2.2_vae.safetensors) with 48-channel video latents" |
+| 768×432 with the 5B model | stops before sampling: "width and height must be multiples of 32" |
+| the 1.3B sailboat case right after the 5B runs, in the same ComfyUI process | latents bit-identical to 0.1.1 |
+| 10 s output | 240 frames, 556 s of sampling, peak allocated 23.15 GiB. Past 5 s the fan keeps widening and its paper turns blotchy; upstream does not guarantee quality beyond the 5 s training length. |
+| two more example scenes of the Looking-Ahead repository | can crush: the hand crushes the can, but the dents partly smooth out in the last second. Book: the hand leaves the frame, and then a page turns by itself. |
+| Looking Ahead Unload | frees the 5B model |
+| 5B TF baseline | `tools/download_model.py --5b --tf` downloaded `tf_wan22_ti2v_5b/model_ema.pt` (20.0 GB) and checked its SHA-256. In the clean install it loaded and generated the paper-fan example: 120 frames at 24 fps, 252.9 s for the whole prompt. Being a different model, its video differs from FCP's (18.0 dB); its fan's ribs come apart while opening. |
+| clean install (section 5's fresh ComfyUI v0.42.1, the pack cloned again from GitHub) | `tools/download_model.py --5b --wan` accepted the checkpoint and text encoder by SHA-256 and downloaded the Wan 2.2 VAE. Queued unchanged with the kite start image, `workflows/api/looking_ahead_5b_image_to_video_api.json` gave the same decoded frames, bit for bit, as the development setup on ComfyUI master. |
+
+| | 5 s (120 frames, 1024×576) | 10 s (240 frames) |
+| --- | --- | --- |
+| sampling | 232.8–233.5 s | 556 s |
+| whole queue, warm text encoder and VAE | 248–254 s | 591 s |
+| peak allocated (torch) | 22.94 GiB | 23.15 GiB |
+| peak Windows commit (whole system) | 71–76 GiB, while loading | 84 GiB, while loading |
+
+The model is 9.3 GiB in bfloat16. The KV cache holds 31 latent frames for both prompts, 12.3 GiB at 1024×576. Loading
+memory-maps the 34 GB float32 checkpoint and keeps a bfloat16 copy of the backbone, which is why the commit charge peaks while
+loading. During sampling it was about 60 GiB.
