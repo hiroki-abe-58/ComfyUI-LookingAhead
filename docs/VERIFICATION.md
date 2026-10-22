@@ -159,6 +159,7 @@ So the queue computes exactly what the sampler computes from ComfyUI's encoded i
 | 10 s output | 240 frames, 556 s of sampling, peak allocated 23.15 GiB. Past 5 s the fan keeps widening and its paper turns blotchy; upstream does not guarantee quality beyond the 5 s training length. |
 | two more example scenes of the Looking-Ahead repository | can crush: the hand crushes the can, but the dents partly smooth out in the last second. Book: the hand leaves the frame, and then a page turns by itself. |
 | Looking Ahead Unload | frees the 5B model |
+| clean install (section 5's fresh ComfyUI v0.42.1, the pack cloned again from GitHub) | `tools/download_model.py --5b --wan` accepted the checkpoint and text encoder by SHA-256 and downloaded the Wan 2.2 VAE. Queued unchanged with the kite start image, `workflows/api/looking_ahead_5b_image_to_video_api.json` gave the same decoded frames, bit for bit, as the development setup on ComfyUI master. |
 
 | | 5 s (120 frames, 1024×576) | 10 s (240 frames) |
 | --- | --- | --- |
