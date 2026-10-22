@@ -53,13 +53,13 @@ def tiny_model(train_frames, seed=0):
     return runtime.build_model(model.state_dict(), dtype=torch.bfloat16, config=TINY, train_latent_frames=train_frames)
 
 
-def tiny_inputs(generated, seed=1, height=4, width=6, channels=16):
+def tiny_inputs(generated, seed=1, height=4, width=6, channels=16, context=1):
     g = torch.Generator().manual_seed(seed)
     positive = torch.zeros(1, 512, 4096)
     negative = torch.zeros(1, 512, 4096)
     positive[:, :7] = torch.randn(1, 7, 4096, generator=g)
     negative[:, :5] = torch.randn(1, 5, 4096, generator=g)
-    initial = torch.randn(1, 1, channels, height, width, generator=g)
+    initial = torch.randn(1, context, channels, height, width, generator=g)
     noise = torch.randn(1, generated, channels, height, width, generator=g)
     return tuple(t.to(torch.bfloat16) for t in (positive, negative, initial, noise))
 
@@ -81,6 +81,50 @@ def test_sample_rejects_unaligned_lengths():
     positive, negative, initial, noise = tiny_inputs(4)
     with pytest.raises(ValueError):
         runtime.sample(model, positive, negative, initial, noise, steps=2)
+    positive, negative, initial, noise = tiny_inputs(3, context=3)
+    with pytest.raises(ValueError, match="1 \\+ 3\\*M"):
+        runtime.sample(model, positive, negative, initial, noise, steps=2)
+
+
+def test_context_geometry_matches_the_official_video_prefix(upstream_dir):
+    sys.path.insert(0, str(upstream_dir))
+    from src.utils import video_prefix
+
+    def official(name, seconds, count, available):
+        config = {"model_name": name, "num_output_frames": -1, "duration": f"{seconds}s", "num_frame_per_block": 3,
+                  "independent_first_frame": True, "v2v_context_latents": count}
+        try:
+            if count is None:
+                return video_prefix.automatic_prefix_geometry(config, available)
+            return video_prefix.prefix_geometry(config)
+        except ValueError:
+            return None
+
+    def ours(family, seconds, count, available):
+        pixels, latents = runtime.frame_counts(seconds=seconds, family=family)
+        try:
+            return runtime.context_geometry(pixels, latents, context_latents=count or 0, available_frames=available)
+        except ValueError:
+            return None
+
+    for family, name in ((runtime.WAN21, "Wan2.1-T2V-1.3B"), (runtime.WAN22, "Wan2.2-TI2V-5B")):
+        for seconds in range(1, 13):
+            for available in (1, 5, 12, 13, 17, 25, 26, 49, 100, 1000):
+                assert ours(family, seconds, None, available) == official(name, seconds, None, available)
+            for count in range(1, 25):
+                assert ours(family, seconds, count, 0) == official(name, seconds, count, 0)
+
+
+def test_context_frames_are_taken_at_the_model_frame_rate():
+    # 25 frames at 24 fps (the official examples). 5B samples them at 24 fps: all 25 frames, none repeated.
+    assert runtime.available_frames(25, 24, 24) == 25
+    assert runtime.context_frame_indices(25, 24, 24, 25, automatic=True) == list(range(25))
+    # 1.3B samples the same video at 16 fps: the official selection of 13 frames from the end.
+    assert runtime.available_frames(25, 24, 16) == 17
+    assert runtime.context_frame_indices(25, 24, 16, 13, automatic=True) == [6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22, 24]
+    assert runtime.context_frame_indices(100, 24, 16, 13, automatic=False) == [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18]
+    with pytest.raises(ValueError):
+        runtime.context_frame_indices(12, 24, 16, 13, automatic=False)  # 0.5 s is shorter than 13 frames at 16 fps
 
 
 def _official_pipeline(upstream_dir, tmp_path, monkeypatch, train_frames, height, width, model_name="Wan2.1-T2V-1.3B",
@@ -109,14 +153,17 @@ def _official_pipeline(upstream_dir, tmp_path, monkeypatch, train_frames, height
     return cdi, generator, args
 
 
-@pytest.mark.parametrize("model_name,config,train_frames,generated", [
-    ("Wan2.1-T2V-1.3B", TINY, 16, 15),  # one window
-    ("Wan2.1-T2V-1.3B", TINY, 7, 12),  # a rolling cache with the 3-frame sink
-    ("Wan2.2-TI2V-5B", TINY22, 7, 12),  # the same with 48-channel Wan 2.2 latents and the ti2v backbone
+@pytest.mark.parametrize("model_name,config,train_frames,generated,context", [
+    ("Wan2.1-T2V-1.3B", TINY, 16, 15, 1),  # one window
+    ("Wan2.1-T2V-1.3B", TINY, 7, 12, 1),  # a rolling cache with the 3-frame sink
+    ("Wan2.2-TI2V-5B", TINY22, 7, 12, 1),  # the same with 48-channel Wan 2.2 latents and the ti2v backbone
+    ("Wan2.1-T2V-1.3B", TINY, 13, 9, 4),  # video continuation: a 4-latent context, one window
+    ("Wan2.2-TI2V-5B", TINY22, 10, 9, 7),  # a 7-latent context and a rolling cache
 ])
-def test_sample_matches_the_official_pipeline(upstream_dir, tmp_path, monkeypatch, model_name, config, train_frames, generated):
+def test_sample_matches_the_official_pipeline(upstream_dir, tmp_path, monkeypatch, model_name, config, train_frames, generated,
+                                              context):
     cdi, generator, args = _official_pipeline(upstream_dir, tmp_path, monkeypatch, train_frames, 4, 6, model_name, config)
-    positive, negative, initial, noise = tiny_inputs(generated, channels=config["in_dim"])
+    positive, negative, initial, noise = tiny_inputs(generated, channels=config["in_dim"], context=context)
     embeds = {"pos": positive, "neg": negative}
     text_encoder = lambda text_prompts: {"prompt_embeds": embeds["neg" if text_prompts == ["neg"] else "pos"]}  # noqa: E731
     pipeline = cdi.CausalDiffusionInferencePipeline(args, device="cpu", generator=generator, text_encoder=text_encoder, vae=object())

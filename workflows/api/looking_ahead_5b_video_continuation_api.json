@@ -1,0 +1,104 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "looking_ahead_input.mp4"
+    },
+    "_meta": {
+      "title": "Video to continue"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "The steam locomotive keeps moving to the right across the stone bridge, pulling its green passenger cars, while white smoke drifts back over the train. The camera stays still.",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Prompt (what happens next)"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Negative prompt (official default)"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan2.2_vae.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "LookingAheadModelLoader",
+    "inputs": {
+      "checkpoint": "fcp_wan22_ti2v_5b/model_ema.pt"
+    }
+  },
+  "7": {
+    "class_type": "LookingAheadVideoContinuation",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "video": [
+        "1",
+        0
+      ],
+      "context_latents": 0,
+      "seconds": 10,
+      "seed": 42,
+      "steps": 50,
+      "cfg": 3.0,
+      "shift": 5.0,
+      "width": 1024,
+      "height": 576,
+      "include_context": true,
+      "keep_model_loaded": false
+    }
+  },
+  "8": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "7",
+        0
+      ],
+      "filename_prefix": "video/LookingAhead5BContinuation",
+      "format": "auto",
+      "codec": "auto"
+    }
+  }
+}

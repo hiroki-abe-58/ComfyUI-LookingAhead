@@ -21,6 +21,11 @@ MOSS-Image (Apache-2.0); prompts and details are in [docs/images](docs/images/RE
 The same start images and prompts with the 5B model (1024×576, 24 fps), again the first try at seed 42. The kite now stays in
 the air and the train crosses the bridge. The windmill's sails smear in some frames, and the dog loses the toy again.
 
+![Video continuation of the 5B train clip, with 5B and 1.3B](docs/images/demo_continuation.gif)
+
+Video continuation: the 5B train clip above, continued to 10 s by both models with the shipped workflows (first try, seed 42).
+The label says whether a frame is input or generated. Both keep the train moving across the bridge. Later, the 5B cars pick up
+red details and the 1.3B cars blur and turn brown.
 ## What is checked
 
 - **Sampler.** Fed the official run's prompt embeddings, first-frame latent and noise, the node's sampler returns latents that
@@ -41,6 +46,10 @@ the air and the train crosses the bridge. The windmill's sails smear in some fra
   frames: 25 dB mean PSNR, 57 % latent difference. Fed ComfyUI's encoded start frame and text, the sampler reproduces the
   queue bit for bit. Either input alone, swapped into the official run (0.8 % and about 3 % different), already moves the
   output by about 60 %.
+- **Video continuation.** Fed the official TV2V run's context latents, embeddings and noise, the sampler is bit-identical to
+  the official one for both models. The context length and frame choice match the official code. End to end, the continued
+  milk pour matches the official one closely: 36.5 dB (1.3B) and 33 dB (5B) mean PSNR. Most of the remaining difference
+  starts in ComfyUI's video decoder, which converts YUV to RGB slightly differently from the official one.
 - **Robustness.** The same workflow queued twice gives bit-identical output. Interrupting stops sampling within a step, and the
   next prompt runs normally.
 
@@ -52,6 +61,7 @@ Details and numbers: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 | --- | --- |
 | **Looking Ahead Model Loader** | Loads `model_ema.pt` (FCP or the TF baseline, 1.3B or 5B) from `models/looking_ahead` as bfloat16 and drops the training-only branches. The model size is read from the weights. One model stays in RAM. |
 | **Looking Ahead Image to Video** | Start image + positive/negative conditioning (umT5-XXL) + VAE (Wan 2.1 for 1.3B, Wan 2.2 for 5B) → `VIDEO` (16 fps for 1.3B, 24 fps for 5B), `IMAGE` frames, `LATENT` and a JSON report. Seed, seconds (1–30), steps, CFG, shift and size; it frees VRAM from other models first, shows progress and can be interrupted. |
+| **Looking Ahead Video Continuation** | The official TV2V mode: a `VIDEO` (for example from `LoadVideo`) + conditioning + VAE → the same outputs as Image to Video. Frames of the input are taken at the model's frame rate, encoded as the context, and the rest of the output is generated after them. By default the context is the longest one the input allows, taken from its end, as upstream does; `context_latents` picks a fixed K = 4, 7, 10, … from its start instead. |
 | **Looking Ahead Unload** | Frees the resident model. |
 
 The text encoder and VAE are ComfyUI's own `CLIPLoader` (type `wan`) and `VAELoader`, so files you already use for Wan 2.1 and
@@ -103,6 +113,18 @@ The workflows use the released settings: 5 s, 50 steps, CFG 3.0 and shift 5.0, a
 - **Size.** Other sizes run, but 1.3B was trained at 768×432 and 5B at 1024×576. For 5B, width and height must be multiples
   of 32.
 
+To continue a video, load `workflows/gui/looking_ahead_video_continuation.json` (1.3B) or
+`workflows/gui/looking_ahead_5b_video_continuation.json` (5B), pick the video, and describe what happens next.
+
+- **Length.** `seconds` is the whole output, context included, as the official `--duration`. With the automatic context, the
+  input fills as much of it as it can: up to the training window, leaving at least one generated chunk. A 5-second input
+  continued to 10 s uses about 4.5 s of it as context and adds about 5.5 s. The output starts with the context frames, decoded
+  again, as the official output does; turn off `include_context` to get only the new frames.
+- **Input frames.** The whole input video is decoded, so trim long videos first. Frames are taken at the model's frame rate,
+  assuming a constant source frame rate. On the frame grid the node takes the exact frame. Upstream's floating-point times
+  repeat some frames there (6 of 25 in its 5B examples); [TencentARC/Looking-Ahead#3](https://github.com/TencentARC/Looking-Ahead/pull/3)
+  fixes that upstream.
+
 ## Speed and memory
 
 RTX 5090, Windows 11, PyTorch 2.10 SDPA, 768×432:
@@ -131,7 +153,7 @@ memory-mapped while loading: Windows commit on this machine peaked at 71–84 GB
 
 ## Limits
 
-- Text-and-image-to-video only (1.3B and 5B). Video continuation (the official TV2V mode) is not supported yet.
+- The two official modes are covered: text-and-image-to-video and video continuation.
 - Batch size 1. CUDA GPU required.
 - Attention runs on PyTorch SDPA. If FlashAttention 4 imports (Linux), it is used, as upstream does.
 

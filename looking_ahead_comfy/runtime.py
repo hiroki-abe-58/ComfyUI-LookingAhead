@@ -10,6 +10,7 @@ formats).
 """
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import torch
@@ -69,6 +70,49 @@ def frame_counts(seconds: int = 0, pixel_frames: int = 0, family: Family = WAN21
     latent = 1 + math.ceil((latent - 1) / FRAMES_PER_BLOCK) * FRAMES_PER_BLOCK
     return pixel_frames, latent
 
+
+def context_geometry(pixel_frames, latent_frames, context_latents=0, available_frames=0):
+    """(K context latents, context pixel frames) for video continuation, as src/utils/video_prefix.prefix_geometry and, for
+    context_latents=0, automatic_prefix_geometry (the longest aligned context that the video's frames at the model frame rate
+    allow, leaving at least one generated chunk). The released recipes use an independent first frame: K = 1 + 3M."""
+    if context_latents <= 0:
+        if available_frames < 1:
+            raise ValueError("the video has no frames at the model's frame rate")
+        maximum = min(1 + (available_frames - 1) // VAE_TEMPORAL_STRIDE, 1 + (pixel_frames - 2) // VAE_TEMPORAL_STRIDE,
+                      latent_frames - FRAMES_PER_BLOCK)
+        context_latents = 1 + (maximum - 1) // FRAMES_PER_BLOCK * FRAMES_PER_BLOCK
+        if context_latents < 1 + FRAMES_PER_BLOCK:
+            raise ValueError("the video is too short for a context of at least 4 latent frames (13 frames at the model's "
+                             "frame rate) followed by a generated chunk")
+    elif context_latents == 1 or (context_latents - 1) % FRAMES_PER_BLOCK:
+        raise ValueError(f"context_latents must be 1 + {FRAMES_PER_BLOCK}*M (4, 7, 10, ...), got {context_latents}")
+    condition_frames = 1 + VAE_TEMPORAL_STRIDE * (context_latents - 1)
+    if pixel_frames <= condition_frames or latent_frames <= context_latents:
+        raise ValueError(f"the output ({pixel_frames} frames) must be longer than the context ({condition_frames} frames)")
+    if (latent_frames - context_latents) % FRAMES_PER_BLOCK:
+        raise ValueError("the generated part must be a whole number of 3-latent-frame chunks")
+    return context_latents, condition_frames
+
+
+def context_frame_indices(frame_count, source_fps, fps, condition_frames, automatic):
+    """Which frames of a constant-frame-rate video starting at 0 s the context uses, as the official SingleVideoDataset
+    samples them: the frames played at `condition_frames` times spaced 1/fps apart, ending at the last frame (automatic)
+    or starting at 0 s. The times are exact fractions, so a time on the frame grid gets that frame. (Upstream computes
+    them in floating point, which repeats 6 of the 25 frames of its 5B examples; TencentARC/Looking-Ahead#3.)"""
+    rate, step = Fraction(source_fps).limit_denominator(100000), Fraction(1, fps)
+    last = (frame_count - 1) / rate
+    if automatic:
+        times = [max(Fraction(0), last - (condition_frames - 1 - i) * step) for i in range(condition_frames)]
+    else:
+        times = [i * step for i in range(condition_frames)]
+        if times[-1] >= frame_count / rate:
+            raise ValueError("the video is too short for the requested context at the model's frame rate")
+    return [min(frame_count - 1, math.floor(t * rate)) for t in times]
+
+
+def available_frames(frame_count, source_fps, fps):
+    """Frames at the model frame rate up to the video's last frame (SingleVideoDataset's `available`)."""
+    return math.floor((frame_count - 1) / Fraction(source_fps).limit_denominator(100000) * fps) + 1
 
 def backbone_state_dict(payload):
     """The EMA generator of a released model_ema.pt as CausalWanModel keys, without the training-only tensors."""
@@ -164,30 +208,40 @@ def flow(model, x, timestep, context, kv_cache, crossattn_cache, current_start, 
 
 @torch.no_grad()
 def sample(model, positive, negative, initial_latent, noise, steps=50, cfg=3.0, shift=5.0, callback=None):
-    """Port of CausalDiffusionInferencePipeline.inference() for TI2V (independent first frame, one conditioning latent).
+    """Port of CausalDiffusionInferencePipeline.inference() (independent first frame) for TI2V and TV2V.
 
-    positive / negative: prompt embeddings [B, text_len, 4096] (padding zeroed); initial_latent: [B, 1, C, H, W];
-    noise: [B, T_gen, C, H, W] with T_gen a multiple of 3. Returns the latents [B, 1 + T_gen, C, H, W].
-    callback(done, total) is called after every denoising step and may raise to interrupt.
+    positive / negative: prompt embeddings [B, text_len, 4096] (padding zeroed); initial_latent: [B, K, C, H, W], the start
+    image (K = 1) or an encoded video prefix (K = 1 + 3M); noise: [B, T_gen, C, H, W] with T_gen a multiple of 3. The first
+    latent frame, then each 3-frame block of the prefix, fills both KV caches at timestep 0 before the generated chunks.
+    Returns the latents [B, K + T_gen, C, H, W]. callback(done, total) is called after every denoising step and may raise
+    to interrupt.
     """
     batch_size, num_frames, channels, height, width = noise.shape
+    num_input_frames = initial_latent.shape[1]
     if num_frames % FRAMES_PER_BLOCK:
         raise ValueError(f"generated latent frames must be a multiple of {FRAMES_PER_BLOCK}, got {num_frames}")
-    if initial_latent.shape[1] != 1:
-        raise ValueError("only a single conditioning latent frame (an image) is supported")
+    if (num_input_frames - 1) % FRAMES_PER_BLOCK:
+        raise ValueError(f"the conditioning latents must be 1 + {FRAMES_PER_BLOCK}*M frames, got {num_input_frames}")
     device, dtype = noise.device, noise.dtype
     frame_seq_len = height * width // 4
     caches = make_caches(model, batch_size, frame_seq_len, dtype, device)
-    output = torch.zeros([batch_size, num_frames + 1, channels, height, width], device=device, dtype=dtype)
+    output = torch.zeros([batch_size, num_frames + num_input_frames, channels, height, width], device=device, dtype=dtype)
     timestep = torch.zeros([batch_size, 1], device=device, dtype=torch.int64)
     output[:, :1].copy_(initial_latent[:, :1])
     for context, kv, cross in ((positive, caches.kv_pos, caches.cross_pos), (negative, caches.kv_neg, caches.cross_neg)):
         flow(model, initial_latent[:, :1], timestep * 0, context, kv, cross, 0, 0)
     current_start = cache_start = 1
+    for _ in range((num_input_frames - 1) // FRAMES_PER_BLOCK):
+        block = initial_latent[:, cache_start:cache_start + FRAMES_PER_BLOCK]
+        output[:, cache_start:cache_start + FRAMES_PER_BLOCK].copy_(block)
+        for context, kv, cross in ((positive, caches.kv_pos, caches.cross_pos), (negative, caches.kv_neg, caches.cross_neg)):
+            flow(model, block, timestep * 0, context, kv, cross, current_start * frame_seq_len, cache_start * frame_seq_len)
+        current_start += FRAMES_PER_BLOCK
+        cache_start += FRAMES_PER_BLOCK
     total = num_frames // FRAMES_PER_BLOCK * steps
     done = 0
     for _ in range(num_frames // FRAMES_PER_BLOCK):
-        latents = noise[:, cache_start - 1:cache_start - 1 + FRAMES_PER_BLOCK]
+        latents = noise[:, cache_start - num_input_frames:cache_start - num_input_frames + FRAMES_PER_BLOCK]
         scheduler = FlowUniPCMultistepScheduler(shift=1)
         scheduler.set_timesteps(steps, device=device, shift=shift)
         for t in scheduler.timesteps:

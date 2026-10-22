@@ -1,7 +1,7 @@
 [project]
 name = "looking-ahead"
-description = "Looking Ahead (TencentARC, Future Chunk Prediction) 1.3B and 5B text-and-image-to-video for ComfyUI: the official autoregressive KV-cache sampler, verified bit-exact against the official pipeline for both models, with ComfyUI's own umT5 text encoder and Wan 2.1 / Wan 2.2 VAE. Unofficial."
-version = "0.2.0"
+description = "Looking Ahead (TencentARC, Future Chunk Prediction) 1.3B and 5B text-and-image-to-video and video continuation for ComfyUI: the official autoregressive KV-cache sampler, verified bit-exact against the official pipeline for both models and both modes, with ComfyUI's own umT5 text encoder and Wan 2.1 / Wan 2.2 VAE. Unofficial."
+version = "0.3.0"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = []

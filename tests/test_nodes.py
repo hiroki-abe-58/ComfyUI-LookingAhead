@@ -13,10 +13,11 @@ def nodes(comfyui_dir):
     return module
 
 
-def test_extension_lists_the_three_nodes(nodes):
+def test_extension_lists_the_four_nodes(nodes):
     extension = asyncio.run(nodes.comfy_entrypoint())
     listed = asyncio.run(extension.get_node_list())
-    assert [n.define_schema().node_id for n in listed] == ["LookingAheadModelLoader", "LookingAheadImageToVideo", "LookingAheadUnload"]
+    assert [n.define_schema().node_id for n in listed] == ["LookingAheadModelLoader", "LookingAheadImageToVideo",
+                                                         "LookingAheadVideoContinuation", "LookingAheadUnload"]
     import folder_paths
 
     assert "looking_ahead" in folder_paths.folder_names_and_paths
