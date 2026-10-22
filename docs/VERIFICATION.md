@@ -80,7 +80,7 @@ The setup was a fresh clone of ComfyUI v0.42.1 and a new virtual environment (Py
 requirements, nothing else), with the pack cloned from GitHub into `custom_nodes`. `tools/download_model.py` found the
 checkpoint already in place and accepted its SHA-256. Queued unchanged, `workflows/api/looking_ahead_image_to_video_api.json`
 produced the same decoded frames, bit for bit, as the development setup on ComfyUI master. The start image was the kite demo
-image.
+image. The sailboat case with the fp8 text encoder also gave identical latents in both setups.
 
 ## 6. Performance (RTX 5090, Windows 11, SDPA)
 
